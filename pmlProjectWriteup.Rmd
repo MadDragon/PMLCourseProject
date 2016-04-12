@@ -1,0 +1,168 @@
+---
+title: "Exercise Quality Recognition Using Sensor Data"
+output: html_document
+---
+## *A Practical Machine Learning Course Project*
+
+### Background
+Human Activity Recognition - **HAR** is a relatively new, but rapidly growing area that aims to recognize the actions and goals of one or more humans from a series of observations of ther actions as registered by a variety of sensors, like wearable acceleromteres, cameras or movement sensors. 
+
+A study from 2013 collected data from 6 healthy male subjects while doing repeptitive weight lifting exercises. Participants have been asked to perform one set of Unilateral Dumbbell Biceps Curl in five different fashions (identified in the dataset as "classe"), one of them correctly (class A) and the others displaying various types of common mistakes (class B to E). 
+
+#### Study Details
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+Read more: http://groupware.les.inf.puc-rio.br/har#sbia_paper_section#ixzz45Y1VI8r0
+
+### Data
+The data has been collected using sensors mounted in the users' glove, armband, lumbar belt and dumbbell. The datasets contains raw accelerometer, gyroscope and magenetometer data, as well as calculated features on the Euler angles (roll, pitch and yaw) in a total of 96 derived feature sets. Training data is labeled with the class (A to E), as described above.
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+###  Summary
+The goal of this project was to assess whether exercise mistales can be detected using sensor generated data. 
+A subset of 52 predictors out of a total of 159 has been used in all models. The variable **classe** was used as the predicted value.
+Since the testing data has only 20 obervations, the training data has been split in a training (70%) and a test set (30%).
+Multiple models, implemented using the caret library, have been tested and the final model has been chosen based on accuracy. 
+
+#### Step 1: Getting and Cleaning the Data
+The training and test data has been downloaded from the original location and loaded in memory. **na.strings** parameter was used to ensure that NA and #DIV/0! values are treated as NAs. 
+```{r message=FALSE}
+library(corrplot)
+library(caret)
+library(randomForest)
+```
+```{r}
+pml.training <- read.csv("pml-training.csv", na.strings=c("NA", "#DIV/0!"))
+pml.testing <- read.csv("pml-testing.csv", na.strings=c("NA", "#DIV/0!"))
+```
+
+A preliminary analysis of the data (using dim and summary) shows that:
+
+* The training data set has 19,622 observations of 160 variable
+* There is a significant number of data points containing NA
+* The test data set contains only 20 observations and is not labeled (does not contain **classe**)
+
+The following columns have been removed, leaving us with only 53 variables:
+
+* Columns having NA values 
+* Attributes that relate to the experiment organization and don't influence the outcome (test number, username, timestamps etc.)
+```{r}
+#remove columns that have NAs
+training <-  pml.training[,colSums(is.na(pml.training))==0]
+#remove first 7 columns
+training <-  training[,8:60]
+#testing does not have the classe column; removing the same columns as for training plus problem_id
+validation <- pml.testing[,colnames(training)[1:52]]
+```
+
+#### Step 2: Splitting the data
+The training data has been split in a training and a test data set (70%/30%). A seed has been set before this step to ensure repeatbility of results. After the split, we have a training set with 13737 observations and a test set with 5885 observations.
+
+```{r}
+set.seed(49495)
+#splitting the training set into training (70%) and testing (30%) subsets 
+inTrain <- createDataPartition(training$classe, p=0.7,list=FALSE)
+trainSet <- training[inTrain,]
+testSet <- training[-inTrain,]
+```
+#### Step 4: Exploratory data analysis
+Analysis was performed on the training data set (trainSet) to detect anomalies.
+
+Correlation was assessed using a correlation matrix. Correlation si present between some variables, suggesting that Principal Component Analysis may be helpful as part of preProcessing.
+
+```{r}
+corMatrix <- cor(trainSet[,-53])
+corrMatrix <- abs(corMatrix)
+diag(corMatrix) <- 0
+print(sum(abs(corMatrix)> 0.8))
+corrplot(corMatrix, order = "hclust", method = "color", type = "lower", tl.srt=45)
+```
+
+#### Step 5: Model Training
+The following classification models have been trained and evaluated on the training set:
+
+1. Classification Tree (rpart). No preprocessing.
+2. Stochastic Gradient Boosting (gbm). No Preprocessing.
+3. Stochastic Gradient Boosting (gbm). PCA Preprocessing.
+4. Support Vector Machine (svmRadial). Normalization (center and scale) Preprocessing.
+5. Random Forest (using Random Forest library). No Preprocessing.
+
+The same seed has been used for each model.
+
+```{r eval=FALSE}
+# 1. Predict with rpart
+set.seed(90979)
+rpartModel <- train(classe~., data=trainSet, method="rpart")  
+```
+```{r eval=FALSE}
+# 2. Predict with gbm. No Preprocessing
+set.seed(90979)
+gbmModel <- train(classe~., data=trainSet, method="gbm", verbose=FALSE)  
+```
+```{r eval=FALSE}
+# 3. Predict with gbm and PCA preprocessing
+set.seed(90979)
+gbmPCAModel <- train(classe~., data=trainSet, method="gbm", preProcess="pca", verbose=FALSE)  
+```
+```{r eval=FALSE}
+# 4. Predict with SVM. Center and scale preProcessing
+set.seed(90979)
+svmModel <- train(classe~., data=trainSet, method="svmRadial", preProcess=c("center","scale"), metric="Accuracy")  
+```
+```{r}
+#5. Predict with random forest. No preProcessing
+set.seed(90979)
+rfModel <- randomForest(classe~., data=trainSet)
+```
+
+#### Step 6: Model Evaluation
+Each model has been evaluated against the testSet. 
+
+```{r eval=FALSE}
+#1. evaluate rpart
+rpartPredictedValues <- predict(rpartModel, testSet)
+rpartModelConfusionMatrix <- confusionMatrix(rpartPredictedValues, testSet$classe)
+
+#2. evaluate gbm
+gbmPredictedValues <- predict(gbmModel, testSet)
+gbmModelConfusionMatrix <- confusionMatrix(gbmPredictedValues, testSet$classe)
+
+#3. evaluate gbm with pca
+gbmPcaPredictedValues <- predict(gbmPCAModel, testSet)
+gbmPcaModelConfusionMatrix <- confusionMatrix(gbmPcaPredictedValues, testSet$classe)
+
+#4. evaluate svm
+svmPredictedValues <- predict(svmModel, testSet)
+svmModelConfusionMatrix<- confusionMatrix(svmPredictedValues, testSet$classe)
+```
+```{r}
+#5. evaluate random forest
+rfPredictedValues <- predict(rfModel, testSet)
+rfModelConfusionMatrix <- confusionMatrix(rfPredictedValues, testSet$classe)
+```
+
+The  results are:
+
+Model         |  Accuracy  |  95% CI              |   Kappa
+--------------|------------|----------------------|-----------
+rpart         |   0.4906   |   (0.4777, 0.5034)   |  0.3344   
+gbm           |   0.9648   |   (0.9598, 0.9694)   |  0.9555 
+gbm with PCA  |   0.8187   |   (0.8086, 0.8285)   |  0.7703 
+svm           |   0.9263   |   (0.9193, 0.9328)   |  0.9065
+random forest |   0.9952   |   (0.9931, 0.9968)   |  0.994
+
+The main criteria used to evaluate the models is Accuracy, so Random Forest is chosen as the "winning model" and will be used to predict the data in the original testing set.
+Final Model Details:
+```{r echo=FALSE}
+print(rfModelConfusionMatrix)
+```
+
+#### Step 7: Predicting on the Test Set
+```{r eval=FALSE}
+predictedValues <- predict(rfModel, validation)
+```
+
+Prediction results:
+1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 
+B  A  B  A  A  E  D  B  A  A  B  C  B  A  E  E  A  B  B  B 
